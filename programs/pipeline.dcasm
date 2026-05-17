@@ -1,0 +1,77 @@
+; ============================================================================
+; DamnCore example pipeline
+;   image tile -> GFX preprocess (GNORM) -> TPU matmul -> quant/ReLU
+;   -> GFX overlay (GCOPY) -> framebuffer tile
+; Every tile lives in the one unified RAM; tiles move between units only via
+; approved ownership transfers.
+; ============================================================================
+
+        ; ---- define all tile descriptors (metadata read from unified RAM) ----
+        ADDI  r1, r0, dsc_img
+        TDEF  t0, r1
+        ADDI  r1, r0, dsc_wrk
+        TDEF  t1, r1
+        ADDI  r1, r0, dsc_wgt
+        TDEF  t2, r1
+        ADDI  r1, r0, dsc_trs
+        TDEF  t3, r1
+        ADDI  r1, r0, dsc_frm
+        TDEF  t4, r1
+
+        ; ---- stage 1: graphics preprocessing ----
+        TOWN  t0, GFX             ; image  -> GFX
+        TOWN  t1, GFX             ; work   -> GFX
+        GNORM t1, t0, 128         ; work[i] = image[i] - 128  (center pixels)
+        FENCE
+
+        ; ---- stage 2: tensor execution ----
+        TXFER t1, TPU             ; hand the centered tile to the TPU
+        TOWN  t2, TPU             ; weights -> TPU
+        TOWN  t3, TPU             ; result  -> TPU
+        TLOAD t2, t1              ; stage weight + activation tiles
+        TMAT                      ; 4x4 systolic INT8 matmul, INT32 accumulate
+        TQUANT 6, RELU            ; INT32 -> INT8, shift 6, ReLU
+        TSTORE t3                 ; write quantized result tile
+        FENCE
+
+        ; ---- stage 3: graphics overlay to framebuffer ----
+        TXFER t3, GFX             ; result -> GFX
+        TOWN  t4, GFX             ; framebuffer -> GFX
+        GCOPY t4, t3              ; overlay result into the framebuffer tile
+        FENCE
+        HALT
+
+; ============================================================================
+; data -- tile descriptors (META region). Each block: base, shape, fam/fmt.
+;   shape   = rows<<16 | cols
+;   fam/fmt = family<<8 | format     (1=IMAGE 2=TENSOR 3=WEIGHT 4=FRAME)
+; ============================================================================
+.org 0x100
+dsc_img: .word IMG, 0x00040004, 0x0100
+dsc_wrk: .word WRK, 0x00040004, 0x0200
+dsc_wgt: .word WGT, 0x00040004, 0x0300
+dsc_trs: .word TRS, 0x00040004, 0x0200
+dsc_frm: .word FRM, 0x00040004, 0x0400
+
+; ---- image tile: 4x4 pixels (0..255) ----
+.org 0x200
+IMG: .word 200,200,200,200
+     .word 150,150,150,150
+     .word 100,100,100,100
+     .word  50, 50, 50, 50
+
+; ---- work tile (activation after GNORM) ----
+.org 0x220
+WRK: .word 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+; ---- weight tile: 4x4 INT8 (all ones -> row-sum matmul) ----
+.org 0x240
+WGT: .word 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1
+
+; ---- TPU result tile ----
+.org 0x260
+TRS: .word 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
+
+; ---- framebuffer tile ----
+.org 0x280
+FRM: .word 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0
