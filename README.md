@@ -8,8 +8,8 @@ graphics-style tile processing and a TPU-style tensor engine all live inside
 unit addresses the same physical memory.
 
 ```
-                         ┌──────────────────────────┐
-                         │      Core Manager        │  fetch / decode / dispatch
+                         ┌────────────────────────-──┐
+                         │      Core Manager         │  fetch / decode / dispatch
                          │  PC · regfile · scoreboard│  tile-ownership enforcement
                          └─┬────────┬────────┬───────┘
               ┌────────────┘        │        └────────────┐
