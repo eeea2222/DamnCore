@@ -90,12 +90,14 @@ module dc_core_manager import dc_pkg::*; (
   output logic              halted,
   output logic [31:0]       reject_count
 );
+  // FETCHW1 and TDEF_RW1 are extra latency cycles introduced by the
+  // registered arbiter->RAM pipeline (rdata now arrives 2 cycles after gnt).
   typedef enum logic [4:0] {
-    RST, FETCH, FETCHW, DECODE,
+    RST, FETCH, FETCHW1, FETCHW, DECODE,
     SC_RUN,
     GFX_PRE, GFX_RUN,
     TPU_PRE, TPU_RUN,
-    TDEF_R, TDEF_RW, TDEF_WR,
+    TDEF_R, TDEF_RW1, TDEF_RW, TDEF_WR,
     TILEOP, SYNC, COMMIT, HALTED
   } state_t;
   state_t st;
@@ -224,7 +226,8 @@ module dc_core_manager import dc_pkg::*; (
     end else begin
       case (st)
         RST    : st<=FETCH;
-        FETCH  : if (if_gnt) st<=FETCHW;
+        FETCH  : if (if_gnt) st<=FETCHW1;
+        FETCHW1: st<=FETCHW;
         FETCHW : begin ir<=if_rdata; st<=DECODE; end
         DECODE : begin
           if      (op==OP_HALT)               st<=HALTED;
@@ -253,7 +256,8 @@ module dc_core_manager import dc_pkg::*; (
           if (tpu_ok) st<=TPU_RUN; else st<=COMMIT;
         end
         TPU_RUN: if (tp_done) st<=COMMIT;
-        TDEF_R : if (cm_gnt) st<=TDEF_RW;
+        TDEF_R : if (cm_gnt) st<=TDEF_RW1;
+        TDEF_RW1: st<=TDEF_RW;
         TDEF_RW: begin
           dsc[dr_idx] <= cm_rdata;
           if (dr_idx==2'd2) st<=TDEF_WR;

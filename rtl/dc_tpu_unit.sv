@@ -37,9 +37,10 @@ module dc_tpu_unit import dc_pkg::*; (
   logic [AW-1:0] r_wb, r_ab, r_db;
   logic [13:0]   r_imm;
   logic [4:0]    n;
-  // pipelined-read state: stream 32 words (16 weight + 16 activation)
-  logic [5:0]    iss, cap, idx_q;
-  logic          grant_q;
+  // pipelined-read state: stream 32 words (16 weight + 16 activation).
+  // With the registered arbiter->RAM stage, rdata is 2 cycles after m_gnt.
+  logic [5:0]    iss, cap, idx_q1, idx_q2;
+  logic          grant_q1, grant_q2;
 
   logic [127:0]  aflat, wflat;
   logic [511:0]  cflat;
@@ -84,13 +85,15 @@ module dc_tpu_unit import dc_pkg::*; (
   always_ff @(posedge clk) begin
     if (rst) begin
       st<=IDLE; n<=0; sys_start<=0; aflat<=0; wflat<=0; cflat<=0;
-      iss<=0; cap<=0; idx_q<=0; grant_q<=0;
+      iss<=0; cap<=0; idx_q1<=0; idx_q2<=0; grant_q1<=0; grant_q2<=0;
+      r_op<=6'b0; r_wb<='0; r_ab<='0; r_db<='0; r_imm<=14'b0;
+      for (k=0; k<16; k=k+1) q[k] <= 8'sb0;
     end else begin
       sys_start <= 1'b0;
       case (st)
         IDLE: if (start) begin
           r_op<=op; r_wb<=wbase; r_ab<=abase; r_db<=dbase; r_imm<=imm; n<=0;
-          iss<=0; cap<=0; grant_q<=0;
+          iss<=0; cap<=0; grant_q1<=0; grant_q2<=0;
           case (op)
             OP_TLOAD : st<=TLD;
             OP_TMAT  : st<=MAT_S;
@@ -100,19 +103,25 @@ module dc_tpu_unit import dc_pkg::*; (
           endcase
         end
         // ---- TLOAD: pipelined stream of 32 words, 1 word/cycle ----
+        // Two-cycle read latency: gnt -> ... -> rdata is 2 cycles, so the
+        // grant/idx tag pipeline has two ranks.
         TLD: begin
-          if (grant_q) begin
-            if (idx_q < 6'd16)
-              wflat[idx_q*8 +: 8]            <= m_rdata[7:0];
+          grant_q2 <= grant_q1;
+          idx_q2   <= idx_q1;
+          if (grant_q2) begin
+            if (idx_q2 < 6'd16)
+              wflat[idx_q2*8 +: 8]            <= m_rdata[7:0];
             else
-              aflat[(idx_q-6'd16)*8 +: 8]    <= m_rdata[7:0];
+              aflat[(idx_q2-6'd16)*8 +: 8]    <= m_rdata[7:0];
             cap <= cap + 1'b1;
           end
           if (m_gnt) begin
-            idx_q<=iss; grant_q<=1'b1; iss<=iss+1'b1;
+            idx_q1   <= iss;
+            grant_q1 <= 1'b1;
+            iss      <= iss + 1'b1;
           end else
-            grant_q<=1'b0;
-          if (grant_q && (cap + 1'b1 == 6'd32)) st<=FIN;
+            grant_q1 <= 1'b0;
+          if (grant_q2 && (cap + 1'b1 == 6'd32)) st<=FIN;
         end
         // ---- TMAT ----
         MAT_S: begin sys_start<=1'b1; st<=MAT_W; end

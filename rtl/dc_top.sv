@@ -17,6 +17,15 @@ module dc_top import dc_pkg::*; (
   logic              ram_en, ram_we;
   logic [AW-1:0]     ram_addr;
   logic [DW-1:0]     ram_wdata, ram_rdata;
+  // ---- pipelined RAM input stage (registered between arbiter and RAM) ----
+  // Breaks the long combinational path: priority encoder + 5:1 mux of 32-bit
+  // wdata + 5:1 mux of 16-bit addr was the post-mult bottleneck. Registering
+  // these adds one cycle to write commit and two-cycle total read latency.
+  // `keep` prevents synth from absorbing these flops into the BRAM input
+  // register; we want the *external* break.
+  (* keep = "true" *) logic              ram_en_q, ram_we_q;
+  (* keep = "true" *) logic [AW-1:0]     ram_addr_q;
+  (* keep = "true" *) logic [DW-1:0]     ram_wdata_q;
 
   // ---- per-unit RAM port signals ----
   logic              if_req, if_we;     logic [AW-1:0] if_addr;  logic [31:0] if_wdata;
@@ -64,9 +73,25 @@ module dc_top import dc_pkg::*; (
     .ram_addr(ram_addr), .ram_wdata(ram_wdata)
   );
 
+  // Registered RAM input stage. RAM sees signals 1 cycle after the arbiter
+  // selects them. Reset to 0 keeps unintended writes from firing during rst.
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      ram_en_q    <= 1'b0;
+      ram_we_q    <= 1'b0;
+      ram_addr_q  <= '0;
+      ram_wdata_q <= '0;
+    end else begin
+      ram_en_q    <= ram_en;
+      ram_we_q    <= ram_we;
+      ram_addr_q  <= ram_addr;
+      ram_wdata_q <= ram_wdata;
+    end
+  end
+
   dc_ram #(.AW(AW), .DW(DW)) u_ram (
-    .clk(clk), .en(ram_en), .we(ram_we),
-    .addr(ram_addr), .wdata(ram_wdata), .rdata(ram_rdata)
+    .clk(clk), .en(ram_en_q), .we(ram_we_q),
+    .addr(ram_addr_q), .wdata(ram_wdata_q), .rdata(ram_rdata)
   );
 
   dc_tile_table u_tt (
