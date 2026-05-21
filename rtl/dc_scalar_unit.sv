@@ -32,7 +32,8 @@ module dc_scalar_unit import dc_pkg::*; (
   input  logic              m_gnt,
   input  logic [31:0]       m_rdata
 );
-  typedef enum logic [2:0] {IDLE, EXEC, MEM, MEMW, FIN} state_t;
+  // MEMW1 is the extra latency cycle introduced by the registered RAM input.
+  typedef enum logic [2:0] {IDLE, EXEC, MEM, MEMW1, MEMW, FIN} state_t;
   state_t st;
 
   logic [5:0]  r_op;
@@ -83,8 +84,9 @@ module dc_scalar_unit import dc_pkg::*; (
               end
         EXEC: begin if (is_mem) st<=MEM; else st<=FIN; end
         MEM : if (m_gnt) begin
-                if (r_op==OP_STORE) st<=FIN; else st<=MEMW;
+                if (r_op==OP_STORE) st<=FIN; else st<=MEMW1;
               end
+        MEMW1: st<=MEMW;
         MEMW: begin r_ld<=m_rdata; st<=FIN; end
         FIN : st <= IDLE;
         default: st<=IDLE;
