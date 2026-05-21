@@ -86,6 +86,7 @@ module dc_gfx_unit import dc_pkg::*; (
   logic [11:0] filt_sum;
   logic [11:0] blur_sum_q;
   logic [25:0] blur_div9_prod;
+  logic [3:0]  filt_tap_sel;
   logic [7:0]  filt_r, filt_c;
   logic [31:0] filt_px;
   integer      filt_pr_i, filt_pc_i, filt_sr_hi, filt_sc_hi;
@@ -105,9 +106,10 @@ module dc_gfx_unit import dc_pkg::*; (
     filt_pc_i = pc;
     filt_sr_hi = r_sr - 1;
     filt_sc_hi = r_sc - 1;
+    filt_tap_sel = ((st==PROC_COMP) && (r_op==OP_GFILT)) ? 4'd0 : filt_tap;
     filt_r = pr;
     filt_c = pc;
-    case (filt_tap)
+    case (filt_tap_sel)
       4'd0: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i-1, filt_sc_hi); end
       4'd1: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i,   filt_sc_hi); end
       4'd2: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i+1, filt_sc_hi); end
@@ -194,8 +196,8 @@ module dc_gfx_unit import dc_pkg::*; (
         // only the 3x3 sum here; the exact divide-by-9 is in PROC_DIV.
         PROC_COMP: begin
           if (r_op==OP_GFILT) begin
-            filt_tap <= 4'd0;
-            filt_sum <= 12'd0;
+            filt_tap <= 4'd1;
+            filt_sum <= filt_px[11:0];
             st <= PROC_FILT;
           end else begin
             gval_q <= gval;
