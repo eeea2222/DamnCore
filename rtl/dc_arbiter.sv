@@ -20,21 +20,54 @@ module dc_arbiter #(
   output logic [AW-1:0]     ram_addr,
   output logic [DW-1:0]     ram_wdata
 );
-  integer sel;
+  wire [AW-1:0] addr0 = addr_in[0*AW +: AW];
+  wire [AW-1:0] addr1 = addr_in[1*AW +: AW];
+  wire [AW-1:0] addr2 = addr_in[2*AW +: AW];
+  wire [AW-1:0] addr3 = addr_in[3*AW +: AW];
+  wire [AW-1:0] addr4 = addr_in[4*AW +: AW];
+  wire [DW-1:0] data0 = wdata_in[0*DW +: DW];
+  wire [DW-1:0] data1 = wdata_in[1*DW +: DW];
+  wire [DW-1:0] data2 = wdata_in[2*DW +: DW];
+  wire [DW-1:0] data3 = wdata_in[3*DW +: DW];
+  wire [DW-1:0] data4 = wdata_in[4*DW +: DW];
+
   always_comb begin
     gnt = 5'b0;
-    sel = -1;
-    if      (req[0]) sel = 0;
-    else if (req[1]) sel = 1;
-    else if (req[2]) sel = 2;
-    else if (req[3]) sel = 3;
-    else if (req[4]) sel = 4;
+    ram_en    = 1'b0;
+    ram_we    = 1'b0;
+    ram_addr  = '0;
+    ram_wdata = '0;
 
-    if (sel >= 0) gnt[sel] = 1'b1;
-
-    ram_en    = (sel >= 0);
-    ram_we    = (sel >= 0) ? we_in[sel]                   : 1'b0;
-    ram_addr  = (sel >= 0) ? addr_in [sel*AW +: AW]       : '0;
-    ram_wdata = (sel >= 0) ? wdata_in[sel*DW +: DW]       : '0;
+    if (req[0]) begin
+      gnt[0]    = 1'b1;
+      ram_en    = 1'b1;
+      ram_we    = we_in[0];
+      ram_addr  = addr0;
+      ram_wdata = data0;
+    end else if (req[1]) begin
+      gnt[1]    = 1'b1;
+      ram_en    = 1'b1;
+      ram_we    = we_in[1];
+      ram_addr  = addr1;
+      ram_wdata = data1;
+    end else if (req[2]) begin
+      gnt[2]    = 1'b1;
+      ram_en    = 1'b1;
+      ram_we    = we_in[2];
+      ram_addr  = addr2;
+      ram_wdata = data2;
+    end else if (req[3]) begin
+      gnt[3]    = 1'b1;
+      ram_en    = 1'b1;
+      ram_we    = we_in[3];
+      ram_addr  = addr3;
+      ram_wdata = data3;
+    end else if (req[4]) begin
+      gnt[4]    = 1'b1;
+      ram_en    = 1'b1;
+      ram_we    = we_in[4];
+      ram_addr  = addr4;
+      ram_wdata = data4;
+    end
   end
 endmodule
