@@ -72,6 +72,8 @@ It receives a hex image over UART, writes it into unified RAM while the core is
 held in reset, then releases the scalar/GFX/TPU core to execute from address 0.
 See docs/BOARD_UART_BOOT.md for the protocol, host command and timing-closure
 notes.
+See docs/TIMING_50MHZ.md for the current 50 MHz timing strategy and signoff
+checklist.
 How it is verified
 model/golden.py is the reference implementation of the ISA, tile rules, graphics ops, matmul and quantization. The RTL testbench runs an assembled program and dumps the final RAM; tests/test_integration.py diffs the entire RTL RAM image against the golden model word-for-word. The tests prove:
 

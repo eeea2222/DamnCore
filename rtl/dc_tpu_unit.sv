@@ -37,6 +37,7 @@ module dc_tpu_unit import dc_pkg::*; (
   logic [AW-1:0] r_wb, r_ab, r_db;
   logic [13:0]   r_imm;
   logic [4:0]    n;
+  logic [4:0]    q_idx;
   // pipelined-read state: stream 32 words (16 weight + 16 activation).
   // With the registered arbiter->RAM stage, rdata is 2 cycles after m_gnt.
   logic [5:0]    iss, cap, idx_q1, idx_q2;
@@ -84,7 +85,7 @@ module dc_tpu_unit import dc_pkg::*; (
   integer k;
   always_ff @(posedge clk) begin
     if (rst) begin
-      st<=IDLE; n<=0; sys_start<=0; aflat<=0; wflat<=0; cflat<=0;
+      st<=IDLE; n<=0; q_idx<=0; sys_start<=0; aflat<=0; wflat<=0; cflat<=0;
       iss<=0; cap<=0; idx_q1<=0; idx_q2<=0; grant_q1<=0; grant_q2<=0;
       r_op<=6'b0; r_wb<='0; r_ab<='0; r_db<='0; r_imm<=14'b0;
       for (k=0; k<16; k=k+1) q[k] <= 8'sb0;
@@ -92,7 +93,7 @@ module dc_tpu_unit import dc_pkg::*; (
       sys_start <= 1'b0;
       case (st)
         IDLE: if (start) begin
-          r_op<=op; r_wb<=wbase; r_ab<=abase; r_db<=dbase; r_imm<=imm; n<=0;
+          r_op<=op; r_wb<=wbase; r_ab<=abase; r_db<=dbase; r_imm<=imm; n<=0; q_idx<=0;
           iss<=0; cap<=0; grant_q1<=0; grant_q2<=0;
           case (op)
             OP_TLOAD : st<=TLD;
@@ -128,9 +129,9 @@ module dc_tpu_unit import dc_pkg::*; (
         MAT_W: if (sys_done) begin cflat<=sys_c; st<=FIN; end
         // ---- TQUANT ----
         QNT: begin
-          for (k=0;k<16;k=k+1)
-            q[k] <= quant($signed(cflat[k*32 +: 32]));
-          st<=FIN;
+          q[q_idx[3:0]] <= quant($signed(cflat[q_idx[3:0]*32 +: 32]));
+          if (q_idx==5'd15) st<=FIN;
+          else              q_idx<=q_idx+1'b1;
         end
         // ---- TSTORE ----
         ST : if (m_gnt) begin
