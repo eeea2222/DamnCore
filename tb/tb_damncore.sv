@@ -12,7 +12,12 @@ module tb_damncore;
   logic clk = 0, rst = 1, halted;
   always #5 clk = ~clk;
 
-  dc_top dut (.clk(clk), .rst(rst), .halted(halted));
+  dc_top dut (
+    .clk(clk), .rst(rst),
+    .boot_hold(1'b0), .boot_we(1'b0),
+    .boot_addr('0), .boot_wdata('0),
+    .halted(halted)
+  );
 
   string prog    = "build/prog.hex";
   string ramout  = "build/ram_out.hex";
