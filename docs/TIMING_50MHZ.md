@@ -9,9 +9,9 @@ early builds into the low-MHz range.
 
 - The unified RAM input is registered after arbitration in `dc_top`.
 - The arbiter now uses explicit fixed mux slices instead of dynamic part-selects.
-- `GFILT` is split into sum, exact divide-by-9, and write stages. The divide is
-  implemented as `(sum * 1821) >> 14`, which is exact for the 3x3 8-bit blur
-  sum range `0..2295`.
+- `GFILT` serializes its 3x3 tap sum to one local-buffer read plus one add per
+  cycle. The divide is implemented as `(sum * 1821) >> 14`, which is exact for
+  the 3x3 8-bit blur sum range `0..2295`.
 - `TQUANT` quantizes one lane per cycle instead of all 16 lanes in one cycle.
 - The systolic array registers each PE product before accumulation, splitting
   multiplier timing from the 32-bit accumulator add.
@@ -27,7 +27,8 @@ early builds into the low-MHz range.
 
 These changes trade a few cycles of latency for shorter combinational paths:
 
-- `GFILT` gains one cycle per output pixel.
+- `GFILT` gains eight cycles per output pixel versus the earlier parallel tap
+  sum, but avoids the 9-read/adder combinational filter cloud.
 - `TQUANT` takes 16 cycles instead of one.
 - `TMAT` gains one cycle for the PE product pipeline.
 - Scalar ALU, branch, load and store cycle counts are unchanged.
