@@ -116,11 +116,14 @@ module dc_core_manager import dc_pkg::*; (
   wire [3:0]  rs2 = ir[17:14];
   wire [13:0] imm = ir[13:0];
 
-  // opcodes are grouped into contiguous ranges (see dc_pkg.sv)
-  wire is_scalar = (op >= OP_ADD)   && (op <= OP_BNE);
-  wire is_gfx    = (op >= OP_GFILL) && (op <= OP_GFILT);
-  wire is_tpu    = (op >= OP_TLOAD) && (op <= OP_TSTORE);
-  wire is_tileop = (op >= OP_TOWN)  && (op <= OP_TFREE);
+  // Opcode classes use the high bits in dc_pkg.sv. Decode those directly
+  // instead of building wider range comparators on the control path.
+  wire is_scalar = (op[5:4]==2'b00) && (op[3:0] >= OP_ADD[3:0]) &&
+                                      (op[3:0] <= OP_BNE[3:0]);
+  wire is_gfx    = (op[5:4]==2'b10) && (op[3:0] <= OP_GFILT[3:0]);
+  wire is_tpu    = (op[5:4]==2'b11) && (op[3:0] <= OP_TSTORE[3:0]);
+  wire is_tileop = (op[5:4]==2'b01) && (op[3:0] >= OP_TOWN[3:0]) &&
+                                      (op[3:0] <= OP_TFREE[3:0]);
 
   // ---- tile table read indices ----
   assign tt_ridx_a = (op==OP_TLOAD) ? rs1 : rd;

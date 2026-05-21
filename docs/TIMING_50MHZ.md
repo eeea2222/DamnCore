@@ -18,6 +18,10 @@ early builds into the low-MHz range.
 - Scalar ALU/branch/load results and memory addresses are registered inside the
   scalar unit before the Core Manager consumes them.
 - The GFX unit keeps shape products and row offsets registered at dispatch.
+- The tile table resets only owner/state, because descriptor payload fields are
+  don't-care until TDEF writes a legal entry.
+- Core Manager opcode class decode uses opcode bit fields instead of wider
+  range comparators.
 
 ## Expected Tradeoff
 
