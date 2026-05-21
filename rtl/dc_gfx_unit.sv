@@ -30,10 +30,9 @@ module dc_gfx_unit import dc_pkg::*; (
   input  logic              m_gnt,
   input  logic [31:0]       m_rdata
 );
-  // PROC split into PROC_COMP (latch gval into gval_q, 1 cycle) and PROC_WR
-  // (issue the registered write). 2 cycles/element but the deep combinational
-  // gval logic is no longer on the cycle-critical RAM-write path.
-  typedef enum logic [2:0] {IDLE,LOAD,PROC_COMP,PROC,FIN} state_t;
+  // PROC is split so expensive GFILT work is never on the RAM-write cycle.
+  // GFILT takes one extra stage for the exact divide-by-9 reciprocal multiply.
+  typedef enum logic [2:0] {IDLE,LOAD,PROC_COMP,PROC_DIV,PROC,FIN} state_t;
   state_t st;
 
   logic [5:0]   r_op;
@@ -75,14 +74,14 @@ module dc_gfx_unit import dc_pkg::*; (
     px   = {24'b0, word[7:0]};
   endfunction
 
-  // 3x3 box-blur sum at (pr,pc)
-  function automatic [31:0] blur(input [7:0] rr, input [7:0] cc);
+  // 3x3 box-blur sum at (pr,pc). Division is done in a later pipeline stage.
+  function automatic [11:0] blur_sum(input [7:0] rr, input [7:0] cc);
     integer dr, dc, s;
     s = 0;
     for (dr=-1; dr<=1; dr=dr+1)
       for (dc=-1; dc<=1; dc=dc+1)
         s = s + px(clp(rr+dr, r_sr-1), clp(cc+dc, r_sc-1));
-    blur = s / 9;
+    blur_sum = s[11:0];
   endfunction
 
   // value written for the current PROC element. Computed combinationally,
@@ -92,6 +91,8 @@ module dc_gfx_unit import dc_pkg::*; (
   logic [31:0] cur_pix;
   logic [31:0] gval;
   logic [31:0] gval_q;
+  logic [11:0] blur_sum_q;
+  logic [25:0] blur_div9_prod;
   always_comb begin
     cur_pix = {24'b0, lb[n][7:0]};
     case (r_op)
@@ -99,10 +100,11 @@ module dc_gfx_unit import dc_pkg::*; (
       OP_GCOPY: gval = lb[n];
       OP_GCVT : gval = 32'd255 - cur_pix;
       OP_GNORM: gval = $signed(cur_pix) - $signed(simm);
-      OP_GFILT: gval = blur(pr, pc);
+      OP_GFILT: gval = {20'b0, blur_sum(pr, pc)};
       default : gval = 32'b0;
     endcase
   end
+  assign blur_div9_prod = blur_sum_q * 14'd1821; // exact floor(sum/9) for 0..2295
 
   assign busy = (st!=IDLE);
   assign done = (st==FIN);
@@ -124,7 +126,7 @@ module dc_gfx_unit import dc_pkg::*; (
       idx_q1<=0; idx_q2<=0; grant_q1<=0; grant_q2<=0;
       r_op<=6'b0; r_db<='0; r_sb<='0;
       r_dr<=8'b0; r_dc<=8'b0; r_sr<=8'b0; r_sc<=8'b0; r_imm<=14'b0;
-      ld_cnt<=13'b0; proc_cnt<=13'b0; gval_q<=32'b0;
+      ld_cnt<=13'b0; proc_cnt<=13'b0; gval_q<=32'b0; blur_sum_q<=12'b0;
       for (ri=0; ri<8;  ri=ri+1) row_off[ri] <= 6'b0;
       // NOTE: lb[] is intentionally NOT reset. Resetting 64x32 FFs blew up the
       // reset-net fanout (16+ns of routing into every lb[i].CE on FPGA). The
@@ -171,9 +173,21 @@ module dc_gfx_unit import dc_pkg::*; (
             n<=0; pr<=0; pc<=0; st<=PROC_COMP;
           end
         end
-        // Capture the combinational result into gval_q so the deep blur/clamp
-        // chain is not on the same cycle as the RAM write.
-        PROC_COMP: begin gval_q <= gval; st<=PROC; end
+        // Capture the combinational result before the RAM write. GFILT captures
+        // only the 3x3 sum here; the exact divide-by-9 is in PROC_DIV.
+        PROC_COMP: begin
+          if (r_op==OP_GFILT) begin
+            blur_sum_q <= gval[11:0];
+            st <= PROC_DIV;
+          end else begin
+            gval_q <= gval;
+            st <= PROC;
+          end
+        end
+        PROC_DIV: begin
+          gval_q <= {18'b0, blur_div9_prod[25:14]};
+          st <= PROC;
+        end
         PROC: if (m_gnt) begin
           if (n+1 >= proc_cnt) st<=FIN;
           else begin
