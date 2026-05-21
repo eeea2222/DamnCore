@@ -53,8 +53,10 @@ module dc_tile_table import dc_pkg::*; (
   always_ff @(posedge clk) begin
     if (rst) begin
       for (i = 0; i < NTILE; i = i + 1) begin
-        base[i]<='0; rows[i]<='0; cols[i]<='0; fam[i]<='0;
-        fmt[i]<='0;  owner[i]<=U_NONE; state[i]<=S_FREE;
+        // Only owner/state participate in post-reset legality checks. The
+        // descriptor payload is don't-care until a TDEF writes the entry, so
+        // leaving it unreset avoids a wide reset fanout across the table.
+        owner[i]<=U_NONE; state[i]<=S_FREE;
       end
     end else if (we) begin
       base[widx]<=w_base; rows[widx]<=w_rows; cols[widx]<=w_cols;
