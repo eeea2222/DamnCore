@@ -8,8 +8,15 @@
 module dc_top import dc_pkg::*; (
   input  logic clk,
   input  logic rst,
+  input  logic boot_hold,
+  input  logic boot_we,
+  input  logic [AW-1:0] boot_addr,
+  input  logic [DW-1:0] boot_wdata,
   output logic halted
 );
+  logic core_rst;
+  assign core_rst = rst | boot_hold;
+
   // ---- arbiter <-> RAM ----
   logic [4:0]        req, we_in, gnt;
   logic [5*AW-1:0]   addr_in;
@@ -76,7 +83,7 @@ module dc_top import dc_pkg::*; (
   // Registered RAM input stage. RAM sees signals 1 cycle after the arbiter
   // selects them. Reset to 0 keeps unintended writes from firing during rst.
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (core_rst) begin
       ram_en_q    <= 1'b0;
       ram_we_q    <= 1'b0;
       ram_addr_q  <= '0;
@@ -90,12 +97,16 @@ module dc_top import dc_pkg::*; (
   end
 
   dc_ram #(.AW(AW), .DW(DW)) u_ram (
-    .clk(clk), .en(ram_en_q), .we(ram_we_q),
-    .addr(ram_addr_q), .wdata(ram_wdata_q), .rdata(ram_rdata)
+    .clk(clk),
+    .en(boot_hold ? boot_we    : ram_en_q),
+    .we(boot_hold ? 1'b1       : ram_we_q),
+    .addr(boot_hold ? boot_addr  : ram_addr_q),
+    .wdata(boot_hold ? boot_wdata : ram_wdata_q),
+    .rdata(ram_rdata)
   );
 
   dc_tile_table u_tt (
-    .clk(clk), .rst(rst),
+    .clk(clk), .rst(core_rst),
     .we(tt_we), .widx(tt_widx),
     .w_base(tt_w_base), .w_rows(tt_w_rows), .w_cols(tt_w_cols),
     .w_fam(tt_w_fam), .w_fmt(tt_w_fmt),
@@ -111,7 +122,7 @@ module dc_top import dc_pkg::*; (
   );
 
   dc_core_manager u_cm (
-    .clk(clk), .rst(rst),
+    .clk(clk), .rst(core_rst),
     .if_req(if_req), .if_we(if_we), .if_addr(if_addr), .if_wdata(if_wdata),
     .if_gnt(gnt[P_IFETCH]), .if_rdata(ram_rdata),
     .cm_req(cm_req), .cm_we(cm_we), .cm_addr(cm_addr), .cm_wdata(cm_wdata),
@@ -143,7 +154,7 @@ module dc_top import dc_pkg::*; (
   );
 
   dc_scalar_unit u_scalar (
-    .clk(clk), .rst(rst),
+    .clk(clk), .rst(core_rst),
     .start(sc_start), .op(sc_op), .a(sc_a), .b(sc_b), .imm(sc_imm),
     .busy(), .done(sc_done), .result(sc_result), .wr_en(sc_wr_en),
     .br_taken(sc_br_taken), .br_target(sc_br_target),
@@ -152,7 +163,7 @@ module dc_top import dc_pkg::*; (
   );
 
   dc_gfx_unit u_gfx (
-    .clk(clk), .rst(rst),
+    .clk(clk), .rst(core_rst),
     .start(gx_start), .op(gx_op),
     .dbase(gx_dbase), .sbase(gx_sbase),
     .drows(gx_drows), .dcols(gx_dcols),
@@ -163,7 +174,7 @@ module dc_top import dc_pkg::*; (
   );
 
   dc_tpu_unit u_tpu (
-    .clk(clk), .rst(rst),
+    .clk(clk), .rst(core_rst),
     .start(tp_start), .op(tp_op),
     .wbase(tp_wbase), .abase(tp_abase), .dbase(tp_dbase), .imm(tp_imm),
     .busy(), .done(tp_done),

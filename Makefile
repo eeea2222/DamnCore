@@ -8,7 +8,7 @@ PYTHON   ?= python3
 RTL  := rtl/dc_pkg.sv $(filter-out rtl/dc_pkg.sv,$(wildcard rtl/*.sv))
 BUILD := build
 
-.PHONY: all asm sim arb golden test clean tools
+.PHONY: all asm sim arb uart-boot-sim golden test clean tools boothex
 
 all: sim test
 
@@ -31,6 +31,13 @@ arb: $(BUILD)
 	$(IVERILOG) -g2012 -o $(BUILD)/arb rtl/dc_pkg.sv rtl/dc_arbiter.sv \
 	  rtl/dc_ram.sv tb/tb_arbiter.sv
 	$(VVP) $(BUILD)/arb
+
+uart-boot-sim: $(BUILD)
+	$(IVERILOG) -g2012 -o $(BUILD)/uart_boot_sim $(RTL) tb/tb_uart_boot.sv
+	$(VVP) $(BUILD)/uart_boot_sim
+
+boothex: asm
+	@echo "send with: python3 tools/uart_boot.py /dev/ttyUSB0 $(BUILD)/pipeline.hex"
 
 # run the golden model on the pipeline program
 golden:
