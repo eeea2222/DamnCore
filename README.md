@@ -24,6 +24,7 @@ Quick start
 make tools     # installs icarus-verilog via Homebrew if missing
 make sim       # assemble + simulate the example pipeline program
 make arb       # arbiter contention / corruption testbench
+make uart-boot-sim # simulate the UART board boot path
 make test      # golden model + full RTL-vs-golden regression (pytest)
 All 18 tests pass: scalar ISA, tile ownership, graphics ops, tensor matmul, quantization, and a full RTL-vs-golden RAM diff of the example pipeline.
 
@@ -57,11 +58,20 @@ with every tile hand-off going through an approved ownership transfer.
 Project layout
 rtl/   dc_pkg  dc_ram  dc_arbiter  dc_tile_table  dc_core_manager
        dc_scalar_unit  dc_gfx_unit  dc_tpu_unit  dc_systolic4  dc_top
+       dc_uart_boot  dc_board_uart_top
 tb/    tb_damncore (full SoC)   tb_arbiter (contention test)
 asm/   assembler.py             — DCN assembler (.dcasm → hex image)
 model/ golden.py                — Python golden reference model
+tools/ uart_boot.py             — host sender for UART-loaded hex images
 programs/ pipeline.dcasm        — example end-to-end program
 tests/ test_scalar / test_tiles / test_gfx / test_tpu / test_integration
+
+Board boot
+dc_board_uart_top is the pin-agnostic FPGA wrapper for a 50 MHz board clock.
+It receives a hex image over UART, writes it into unified RAM while the core is
+held in reset, then releases the scalar/GFX/TPU core to execute from address 0.
+See docs/BOARD_UART_BOOT.md for the protocol, host command and timing-closure
+notes.
 How it is verified
 model/golden.py is the reference implementation of the ISA, tile rules, graphics ops, matmul and quantization. The RTL testbench runs an assembled program and dumps the final RAM; tests/test_integration.py diffs the entire RTL RAM image against the golden model word-for-word. The tests prove:
 
@@ -82,4 +92,3 @@ DamnCore is single-issue and in-order: the Core Manager dispatches one unit at a
 
 Memory bandwidth
 Tile streaming reads in the graphics and tensor units are pipelined: a new RAM read is issued every cycle while the previous cycle's word is captured, so sustained read bandwidth is 1 word/cycle instead of the 2-cycle-per-word request/capture handshake. The capture is gated on a registered grant, so the scheme also stalls correctly under arbiter contention. This cuts the example pipeline from 365 to 304 cycles: a 16-word GFX tile load drops 32→17 cycles and the 32-word TPU TLOAD drops 64→33 cycles.
-
