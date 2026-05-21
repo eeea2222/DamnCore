@@ -39,6 +39,9 @@ module dc_scalar_unit import dc_pkg::*; (
   logic [5:0]  r_op;
   logic [31:0] r_a, r_b, r_ld;
   logic [13:0] r_imm;
+  logic [31:0] r_result;
+  logic        r_wr_en, r_br_taken;
+  logic [AW-1:0] r_br_target, r_mem_addr;
 
   wire [31:0] simm = {{18{r_imm[13]}}, r_imm};         // sign-extended imm
   wire [4:0]  sh   = r_imm[4:0];
@@ -55,12 +58,10 @@ module dc_scalar_unit import dc_pkg::*; (
   wire is_mem  = (r_op==OP_LOAD) || (r_op==OP_STORE);
   wire is_alu  = (r_op >= OP_ADD) && (r_op <= OP_ADDI);   // contiguous range
 
-  assign result   = (r_op==OP_LOAD) ? r_ld : alu;
-  assign wr_en    = is_alu || (r_op==OP_LOAD);
-  assign br_taken = (r_op==OP_JMP) ||
-                    (r_op==OP_BEQ && (r_a==r_b)) ||
-                    (r_op==OP_BNE && (r_a!=r_b));
-  assign br_target= r_imm;
+  assign result   = r_result;
+  assign wr_en    = r_wr_en;
+  assign br_taken = r_br_taken;
+  assign br_target= r_br_target;
   assign busy     = (st != IDLE);
   assign done     = (st == FIN);
 
@@ -69,7 +70,7 @@ module dc_scalar_unit import dc_pkg::*; (
     if (st==MEM) begin
       m_req   = 1'b1;
       m_we    = (r_op==OP_STORE);
-      m_addr  = (r_a + simm);
+      m_addr  = r_mem_addr;
       m_wdata = r_b;
     end
   end
@@ -77,18 +78,29 @@ module dc_scalar_unit import dc_pkg::*; (
   always_ff @(posedge clk) begin
     if (rst) begin
       st<=IDLE; r_op<=OP_NOP; r_a<=0; r_b<=0; r_imm<=0; r_ld<=0;
+      r_result<=0; r_wr_en<=0; r_br_taken<=0; r_br_target<=0; r_mem_addr<=0;
     end else begin
       case (st)
         IDLE: if (start) begin
-                r_op<=op; r_a<=a; r_b<=b; r_imm<=imm; st<=EXEC;
+                r_op<=op; r_a<=a; r_b<=b; r_imm<=imm;
+                r_wr_en<=0; r_br_taken<=0; st<=EXEC;
               end
-        EXEC: begin if (is_mem) st<=MEM; else st<=FIN; end
+        EXEC: begin
+                r_result    <= alu;
+                r_wr_en     <= is_alu || (r_op==OP_LOAD);
+                r_br_taken  <= (r_op==OP_JMP) ||
+                               (r_op==OP_BEQ && (r_a==r_b)) ||
+                               (r_op==OP_BNE && (r_a!=r_b));
+                r_br_target <= r_imm;
+                r_mem_addr  <= r_a + simm;
+                if (is_mem) st<=MEM; else st<=FIN;
+              end
         MEM : if (m_gnt) begin
                 if (r_op==OP_STORE) st<=FIN; else st<=MEMW1;
               end
         MEMW1: st<=MEMW;
-        MEMW: begin r_ld<=m_rdata; st<=FIN; end
-        FIN : st <= IDLE;
+        MEMW: begin r_ld<=m_rdata; r_result<=m_rdata; st<=FIN; end
+        FIN : begin st <= IDLE; r_wr_en<=0; r_br_taken<=0; end
         default: st<=IDLE;
       endcase
     end
