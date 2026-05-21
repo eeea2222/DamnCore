@@ -31,8 +31,9 @@ module dc_gfx_unit import dc_pkg::*; (
   input  logic [31:0]       m_rdata
 );
   // PROC is split so expensive GFILT work is never on the RAM-write cycle.
-  // GFILT takes one extra stage for the exact divide-by-9 reciprocal multiply.
-  typedef enum logic [2:0] {IDLE,LOAD,PROC_COMP,PROC_DIV,PROC,FIN} state_t;
+  // GFILT serializes its 3x3 tap sum to avoid a 9-read/adder combinational
+  // cloud, then uses one stage for the exact divide-by-9 reciprocal multiply.
+  typedef enum logic [3:0] {IDLE,LOAD,PROC_COMP,PROC_FILT,PROC_DIV,PROC,FIN} state_t;
   state_t st;
 
   logic [5:0]   r_op;
@@ -74,16 +75,6 @@ module dc_gfx_unit import dc_pkg::*; (
     px   = {24'b0, word[7:0]};
   endfunction
 
-  // 3x3 box-blur sum at (pr,pc). Division is done in a later pipeline stage.
-  function automatic [11:0] blur_sum(input [7:0] rr, input [7:0] cc);
-    integer dr, dc, s;
-    s = 0;
-    for (dr=-1; dr<=1; dr=dr+1)
-      for (dc=-1; dc<=1; dc=dc+1)
-        s = s + px(clp(rr+dr, r_sr-1), clp(cc+dc, r_sc-1));
-    blur_sum = s[11:0];
-  endfunction
-
   // value written for the current PROC element. Computed combinationally,
   // then captured into gval_q (registered) before reaching the RAM port -
   // takes the deep blur()/sign-extend chain off the cycle-critical write
@@ -91,8 +82,13 @@ module dc_gfx_unit import dc_pkg::*; (
   logic [31:0] cur_pix;
   logic [31:0] gval;
   logic [31:0] gval_q;
+  logic [3:0]  filt_tap;
+  logic [11:0] filt_sum;
   logic [11:0] blur_sum_q;
   logic [25:0] blur_div9_prod;
+  logic [7:0]  filt_r, filt_c;
+  logic [31:0] filt_px;
+  integer      filt_pr_i, filt_pc_i, filt_sr_hi, filt_sc_hi;
   always_comb begin
     cur_pix = {24'b0, lb[n][7:0]};
     case (r_op)
@@ -100,9 +96,29 @@ module dc_gfx_unit import dc_pkg::*; (
       OP_GCOPY: gval = lb[n];
       OP_GCVT : gval = 32'd255 - cur_pix;
       OP_GNORM: gval = $signed(cur_pix) - $signed(simm);
-      OP_GFILT: gval = {20'b0, blur_sum(pr, pc)};
+      OP_GFILT: gval = 32'b0;
       default : gval = 32'b0;
     endcase
+  end
+  always_comb begin
+    filt_pr_i = pr;
+    filt_pc_i = pc;
+    filt_sr_hi = r_sr - 1;
+    filt_sc_hi = r_sc - 1;
+    filt_r = pr;
+    filt_c = pc;
+    case (filt_tap)
+      4'd0: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i-1, filt_sc_hi); end
+      4'd1: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i,   filt_sc_hi); end
+      4'd2: begin filt_r = clp(filt_pr_i-1, filt_sr_hi); filt_c = clp(filt_pc_i+1, filt_sc_hi); end
+      4'd3: begin filt_r = clp(filt_pr_i,   filt_sr_hi); filt_c = clp(filt_pc_i-1, filt_sc_hi); end
+      4'd4: begin filt_r = clp(filt_pr_i,   filt_sr_hi); filt_c = clp(filt_pc_i,   filt_sc_hi); end
+      4'd5: begin filt_r = clp(filt_pr_i,   filt_sr_hi); filt_c = clp(filt_pc_i+1, filt_sc_hi); end
+      4'd6: begin filt_r = clp(filt_pr_i+1, filt_sr_hi); filt_c = clp(filt_pc_i-1, filt_sc_hi); end
+      4'd7: begin filt_r = clp(filt_pr_i+1, filt_sr_hi); filt_c = clp(filt_pc_i,   filt_sc_hi); end
+      default: begin filt_r = clp(filt_pr_i+1, filt_sr_hi); filt_c = clp(filt_pc_i+1, filt_sc_hi); end
+    endcase
+    filt_px = px(filt_r, filt_c);
   end
   assign blur_div9_prod = blur_sum_q * 14'd1821; // exact floor(sum/9) for 0..2295
 
@@ -127,6 +143,7 @@ module dc_gfx_unit import dc_pkg::*; (
       r_op<=6'b0; r_db<='0; r_sb<='0;
       r_dr<=8'b0; r_dc<=8'b0; r_sr<=8'b0; r_sc<=8'b0; r_imm<=14'b0;
       ld_cnt<=13'b0; proc_cnt<=13'b0; gval_q<=32'b0; blur_sum_q<=12'b0;
+      filt_tap<=4'b0; filt_sum<=12'b0;
       for (ri=0; ri<8;  ri=ri+1) row_off[ri] <= 6'b0;
       // NOTE: lb[] is intentionally NOT reset. Resetting 64x32 FFs blew up the
       // reset-net fanout (16+ns of routing into every lb[i].CE on FPGA). The
@@ -177,11 +194,21 @@ module dc_gfx_unit import dc_pkg::*; (
         // only the 3x3 sum here; the exact divide-by-9 is in PROC_DIV.
         PROC_COMP: begin
           if (r_op==OP_GFILT) begin
-            blur_sum_q <= gval[11:0];
-            st <= PROC_DIV;
+            filt_tap <= 4'd0;
+            filt_sum <= 12'd0;
+            st <= PROC_FILT;
           end else begin
             gval_q <= gval;
             st <= PROC;
+          end
+        end
+        PROC_FILT: begin
+          if (filt_tap==4'd8) begin
+            blur_sum_q <= filt_sum + filt_px[11:0];
+            st <= PROC_DIV;
+          end else begin
+            filt_sum <= filt_sum + filt_px[11:0];
+            filt_tap <= filt_tap + 1'b1;
           end
         end
         PROC_DIV: begin
