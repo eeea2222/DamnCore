@@ -13,6 +13,10 @@ early builds into the low-MHz range.
   implemented as `(sum * 1821) >> 14`, which is exact for the 3x3 8-bit blur
   sum range `0..2295`.
 - `TQUANT` quantizes one lane per cycle instead of all 16 lanes in one cycle.
+- The systolic array registers each PE product before accumulation, splitting
+  multiplier timing from the 32-bit accumulator add.
+- Scalar ALU/branch/load results and memory addresses are registered inside the
+  scalar unit before the Core Manager consumes them.
 - The GFX unit keeps shape products and row offsets registered at dispatch.
 
 ## Expected Tradeoff
@@ -21,6 +25,8 @@ These changes trade a few cycles of latency for shorter combinational paths:
 
 - `GFILT` gains one cycle per output pixel.
 - `TQUANT` takes 16 cycles instead of one.
+- `TMAT` gains one cycle for the PE product pipeline.
+- Scalar ALU, branch, load and store cycle counts are unchanged.
 - Normal scalar, ownership, RAM load/store, TPU load, and non-filter GFX paths
   keep the same behavior.
 
